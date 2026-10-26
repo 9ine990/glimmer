@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Glimmerwood</title>
+<meta name="description" content="Glimmerwood: a cozy 30-level moonlit platformer.">
+<meta name="theme-color" content="#0b1420">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%E2%9C%A6%3C/text%3E%3C/svg%3E">
+<style>
+:root{--bg:#0b1420;--fg:#eafcf6;--teal:#7cf5e0;--pink:#ff9fd6;--panel:rgba(12,22,34,.86);box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:ui-rounded,"Trebuchet MS","Segoe UI",sans-serif;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center}
+#g{position:relative;width:min(100vw,calc((100vh - 8px) * 16 / 9));width:min(100vw,calc((100dvh - 8px) * 16 / 9));aspect-ratio:16/9;touch-action:none;user-select:none}
+canvas{-webkit-tap-highlight-color:transparent;width:100%;height:100%;display:block;border-radius:10px;background:#12202e}
+#ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:auto;background:rgba(6,12,20,.55);border-radius:10px}
+.p{background:var(--panel);border:1px solid rgba(124,245,224,.4);border-radius:20px;padding:16px 20px;max-width:92%;text-align:center;box-shadow:0 0 40px rgba(124,245,224,.15)}
+h1{margin:0 0 4px;font-size:clamp(22px,5vw,40px);color:var(--teal);letter-spacing:.02em}
+p{margin:4px 0 10px;font-size:clamp(11px,1.8vw,15px);opacity:.85;line-height:1.4}
+button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;font:inherit;cursor:pointer;color:var(--fg);background:rgba(124,245,224,.12);border:1px solid rgba(124,245,224,.45);border-radius:12px;padding:8px 14px;margin:3px}
+button:hover:not(:disabled),button:focus-visible{background:rgba(124,245,224,.3);outline:2px solid var(--pink);outline-offset:1px}
+button:disabled{opacity:.3;cursor:default}
+.go{background:var(--pink);color:#2a0f22;border-color:var(--pink);font-weight:700;padding:10px 22px}
+#grid{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:4px;margin-top:8px}
+#grid button{margin:0;padding:5px 0;font-size:clamp(10px,1.7vw,14px);line-height:1.2}
+#grid small{display:block;font-size:.7em;color:var(--pink);min-height:1em}
+#tc{position:absolute;left:0;right:0;bottom:8px;display:none;justify-content:space-between;padding:0 12px;pointer-events:none}
+#tc div{pointer-events:auto;display:flex;gap:10px}
+#tc button{width:64px;height:64px;border-radius:50%;font-size:26px;background:rgba(10,20,30,.55)}
+@media (pointer:coarse){#tc{display:flex}}
+@media (max-width:560px){#grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
+</style></head><body>
+<div id="g"><canvas id="c"></canvas>
+<div id="ov"></div>
+<div id="tc"><div><button id="tl" aria-label="Left">◀</button><button id="tr" aria-label="Right">▶</button></div><div><button id="tj" aria-label="Jump">▲</button></div></div></div>
+<script>
+const $=id=>document.getElementById(id),cv=$('c'),ctx=cv.getContext('2d'),W=960,H=540;cv.width=W;cv.height=H;
+if(!ctx.roundRect){CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){r=Math.min(Array.isArray(r)?r[0]:(r||0),w/2,h/2);this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()}}
+
+let save={u:1,s:{}};
+try{const t=localStorage.getItem('glimmerwood');if(t)save=Object.assign(save,JSON.parse(t))}catch(e){}
+const persist=()=>{try{localStorage.setItem('glimmerwood',JSON.stringify(save))}catch(e){}};
+function rng(a){let s=(a*2654435761)>>>0;return()=>{s=(Math.imul(s,1664525)+1013904223)>>>0;return s/4294967296}}
+let AC;function snd(f,d=.1,t='sine',v=.04,e=0){try{AC=AC||new(window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain(),n=AC.currentTime;o.type=t;o.frequency.setValueAtTime(f,n);if(e)o.frequency.exponentialRampToValueAtTime(e,n+d);g.gain.setValueAtTime(v,n);g.gain.exponentialRampToValueAtTime(.001,n+d);o.connect(g);g.connect(AC.destination);o.start();o.stop(n+d)}catch(e){}}
+const hit=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+function mpos(m){const k=.5+.5*Math.sin(m.t);m.x=m.x0+(m.x1-m.x0)*k;m.y=m.y0+(m.y1-m.y0)*k}
+
+/* ---------- level generation (seeded, 30 levels) ---------- */
+function gen(n){
+ const r=rng(n+11),L={n,plats:[],movers:[],coins:[],mons:[],secrets:[],deco:[]};
+ const len=2300+n*100,maxGap=Math.min(100+n*2,140);
+ const add=(x,y,w,h,one)=>L.plats.push({x,y,w,h:h||H+80-y,one});
+ const row=(x,y,k)=>{for(let i=0;i<k;i++)L.coins.push({x:x+i*34,y,t:r()*6,got:false})};
+ const hi=(px,ny)=>{add(px,ny-90,70,16,true);add(px+110,ny-175,80,16,true);L.secrets.push({x:px+150,y:ny-199,got:false})};
+ let x=320,y=430;
+ add(-300,y,620);row(120,y-30,4);
+ while(x<len){
+  const big=n>3&&r()<.22+n*.004;
+  const gw=big?170+r()*(50+n):50+r()*(maxGap-50);
+  let ny=big?y:Math.max(300,Math.min(470,y+(r()-.5)*130));if(ny<y-60)ny=y-60;
+  const w=big?200+r()*120:150+r()*270;
+  if(big){L.movers.push({x0:x+4,x1:x+gw-94,y0:y,y1:y,w:90,sp:.9+r()*.5,t:r()*6});row(x+gw/2-50,y-70,4)}
+  else if(gw>110&&r()<.45){const ly=Math.min(y,ny)+88;add(x+gw/2-35,ly,70,16,true);L.secrets.push({x:x+gw/2,y:ly-24,got:false})}
+  else if(gw>70)for(let i=1;i<=4;i++)L.coins.push({x:x+gw*i/5,y:y-40-Math.sin(i/5*Math.PI)*45,t:r()*6,got:false});
+  const px=x+gw;add(px,ny,w);
+  const k=Math.min(8,Math.floor((w-60)/34));if(r()<.7)row(px+30,ny-30,k);
+  const sec=w>=260&&r()<.2;if(sec)hi(px+30,ny);
+  else if(r()<.45){const fx=px+20+r()*(w-130),fy=ny-110-r()*20;
+   if(n>2&&r()<.4)L.movers.push({x0:fx-60,x1:fx+60,y0:fy,y1:fy,w:90,sp:1+r()*.6,t:r()*6});else add(fx,fy,90,16,true);row(fx+10,fy-30,3)}
+  if(w>=220&&r()<.3+n*.015)L.mons.push({x:px+40+r()*(w-120),y:ny-26,by:ny-26,w:30,h:26,a:px+10,b:px+w-40,dir:r()<.5?-1:1,sp:35+n*2+r()*20,hop:n>7&&r()<.5,t:r()*6,alive:true,c:(r()*5)|0,sq:0});
+  for(let j=0;j<3;j++)L.deco.push({x:px+r()*w,y:ny,k:(r()*3)|0});
+  x=px+w;y=ny;
+ }
+ const px=x+90;add(px,y,460);if(!L.secrets.length)hi(px+30,y);
+ row(px+30,y-30,5);L.portal={x:px+380,y:y-44};L.end=px+460;
+ L.movers.forEach(m=>{mpos(m);m.dx=m.dy=0});
+ return L}
+
+/* ---------- state ---------- */
+const BIO=[['#14233a','#2a6a6b','#7ee3b8','#2f5c3c','#4fae6a'],['#101840','#33409a','#8fc4ff','#2a3a72','#5b7be0'],['#2b1238','#8a3f86','#ffb3d9','#4d2449','#d46aa8']];
+const keys={l:0,r:0,j:0,jp:0};let L,P,G={state:'menu',time:0,cam:0},parts=[],T=0;
+function start(n,menu){L=gen(n);G={n,coins:0,total:L.coins.length,hearts:3,sec:0,time:0,state:menu?'menu':'play',cam:0,bio:BIO[Math.min(2,(n-1)/10|0)]};
+ P={x:60,y:400,vx:0,vy:0,w:22,h:30,on:false,f:1,co:0,bf:0,inv:0,ride:null,st:null,safe:{x:60,y:400}};parts=[];
+ $('ov').style.display=menu?'flex':'none'}
+function boom(x,y,c,k=10){for(let i=0;i<k;i++){const a=Math.random()*6.28,s=40+Math.random()*120;parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-40,l:.6+Math.random()*.4,c})}}
+function hurt(pit){G.hearts--;snd(200,.25,'sawtooth',.05,80);if(G.hearts<=0){return over()}
+ P.inv=1.6;if(pit){P.x=P.safe.x;P.y=P.safe.y;P.vx=P.vy=0}else{P.vy=-320;P.vx=-P.f*220}}
+function over(){G.state='over';ui(`<h1>The forest glows dimmer</h1><p>You ran out of hearts on level ${G.n}.</p><button class="go" data-act="start" data-n="${G.n}">Try level ${G.n} again</button><button data-act="menu">Levels</button>`)}
+function win(){G.state='win';snd(520,.5,'triangle',.06,1040);const s=1+(G.coins/G.total>=.7)+(G.sec>0);
+ save.s[G.n]=Math.max(save.s[G.n]||0,s);if(G.n<30)save.u=Math.max(save.u,G.n+1);persist();
+ ui(`<h1>${G.n==30?'You saved the forest!':'Portal reached!'}</h1><p>${'★'.repeat(s)}${'☆'.repeat(3-s)}<br>Crystals ${G.coins}/${G.total} · Hidden stars ${G.sec}</p>${G.n<30?`<button class="go" data-act="start" data-n="${G.n+1}">Level ${G.n+1}</button>`:''}<button data-act="start" data-n="${G.n}">Replay</button><button data-act="menu">Levels</button>`)}
+function ui(h){$('ov').innerHTML=`<div class="p">${h}</div>`;$('ov').style.display='flex'}
+function menu(){G.state='menu';let b='';for(let i=1;i<=30;i++)b+=`<button ${i>save.u?'disabled':''} data-act="start" data-n="${i}">${i}<small>${'★'.repeat(save.s[i]||0)}</small></button>`;
+ ui(`<h1>Glimmerwood</h1><p>Run, jump and stomp through 30 moonlit levels. Collect crystals, dodge or stomp the wobbly critters, and find the hidden stars.<br>Arrows / WASD to move · Space or ↑ to jump · R restart · Esc levels</p><button class="go" data-act="start" data-n="${Math.min(save.u,30)}">Play level ${Math.min(save.u,30)}</button><div id="grid">${b}</div>`)}
+
+/* ---------- update ---------- */
+function step(dt){
+ if(G.state!=='play')return;
+ G.time+=dt;P.inv-=dt;
+ for(const m of L.movers){const ox=m.x,oy=m.y;m.t+=dt*m.sp;mpos(m);m.dx=m.x-ox;m.dy=m.y-oy}
+ if(P.ride){P.x+=P.ride.dx;P.y+=P.ride.dy}
+ const tgt=(keys.r-keys.l)*235;if(tgt)P.f=Math.sign(tgt);
+ P.vx+=(tgt-P.vx)*Math.min(1,(P.on?14:8)*dt);
+ P.co-=dt;P.bf-=dt;if(P.on)P.co=.1;if(keys.jp){P.bf=.12;keys.jp=0}
+ if(P.bf>0&&P.co>0){P.vy=-545;P.bf=P.co=0;snd(380,.15,'square',.025,720)}
+ P.vy=Math.min(720,P.vy+(P.vy<0&&!keys.j?3200:1500)*dt);
+ P.x+=P.vx*dt;
+ for(const s of L.plats)if(!s.one&&hit(P,s)&&P.y+P.h>s.y+6){P.x=P.x+P.w/2<s.x+s.w/2?s.x-P.w:s.x+s.w;P.vx=0}
+ const pb=P.y+P.h;P.y+=P.vy*dt;const nb=P.y+P.h;P.on=false;P.ride=null;P.st=null;
+ const ok=s=>P.x+P.w>s.x&&P.x<s.x+s.w&&P.vy>=0&&pb<=s.y+9&&nb>=s.y;
+ for(const s of L.plats)if(ok(s)){P.y=s.y-P.h;P.vy=0;P.on=true;P.st=s}
+ for(const m of L.movers)if(ok({x:m.x,y:m.y,w:m.w})){P.y=m.y-P.h;P.vy=0;P.on=true;P.ride=m}
+ const s=P.st;if(s&&!s.one&&P.x>s.x+15&&P.x+P.w<s.x+s.w-15)P.safe={x:P.x,y:P.y};
+ if(P.x<-280)P.x=-280;
+ if(P.y>H+120)hurt(true);
+ const cx=P.x+P.w/2,cy=P.y+P.h/2;
+ for(const c of L.coins)if(!c.got&&Math.hypot(c.x-cx,c.y-cy)<26){c.got=true;G.coins++;boom(c.x,c.y,'#8ff6ff',6);snd(900+G.coins%8*60,.1,'triangle',.04)}
+ for(const q of L.secrets)if(!q.got&&Math.hypot(q.x-cx,q.y-cy)<32){q.got=true;G.sec++;if(G.hearts<3)G.hearts++;boom(q.x,q.y,'#ffe27a',24);snd(600,.5,'triangle',.06,1500)}
+ for(const m of L.mons){if(!m.alive){m.sq-=dt;continue}
+  m.t+=dt;m.x+=m.dir*m.sp*dt;if(m.x<m.a){m.x=m.a;m.dir=1}if(m.x>m.b){m.x=m.b;m.dir=-1}
+  m.y=m.by-(m.hop?Math.abs(Math.sin(m.t*3.2))*38:0);
+  if(hit(P,m)){if(P.vy>60&&P.y+P.h<m.y+m.h*.7){m.alive=false;m.sq=.4;P.vy=-400;boom(m.x+15,m.y+14,'#ffb3d9',12);snd(300,.15,'square',.03,600)}else if(P.inv<=0)hurt()}}
+ const pt=L.portal;if(hit(P,{x:pt.x-24,y:pt.y-44,w:48,h:88}))win();
+ const tc=P.x-W*.38;G.cam+=(tc-G.cam)*Math.min(1,dt*6);G.cam=Math.max(-40,Math.min(L.end-W+60,G.cam));
+ for(const p of parts){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=300*dt;p.l-=dt}parts=parts.filter(p=>p.l>0)}
+
+/* ---------- drawing ---------- */
+function star(x,y,r,c){ctx.beginPath();for(let i=0;i<8;i++){const a=i*Math.PI/4-Math.PI/2,q=i%2?r*.4:r;ctx.lineTo(x+Math.cos(a)*q,y+Math.sin(a)*q)}ctx.closePath();ctx.fillStyle=c;ctx.fill()}
+function glow(x,y,r,c,a){const g=ctx.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,c);g.addColorStop(1,'rgba(0,0,0,0)');ctx.globalAlpha=a;ctx.fillStyle=g;ctx.fillRect(x-r,y-r,r*2,r*2);ctx.globalAlpha=1}
+function plat(s,one,mv){const[,,,ea,gr]=G.bio;
+ if(one){ctx.fillStyle=mv?'#a6ecff':ea;ctx.beginPath();ctx.roundRect(s.x,s.y,s.w,16,8);ctx.fill();ctx.fillStyle=mv?'#fff':gr;ctx.beginPath();ctx.roundRect(s.x,s.y,s.w,7,4);ctx.fill();
+  if(mv){ctx.fillStyle='#7cf5e0';for(let i=10;i<s.w;i+=24){ctx.beginPath();ctx.moveTo(s.x+i,s.y+16);ctx.lineTo(s.x+i+5,s.y+16);ctx.lineTo(s.x+i+2.5,s.y+25);ctx.fill()}}return}
+ ctx.fillStyle=ea;ctx.fillRect(s.x,s.y,s.w,s.h);ctx.fillStyle=gr;ctx.beginPath();ctx.roundRect(s.x-3,s.y-3,s.w+6,12,6);ctx.fill();
+ ctx.fillStyle='rgba(0,0,0,.18)';for(let i=14;i<s.w-10;i+=46)ctx.fillRect(s.x+i,s.y+22+(i*7%30),10,5)}
+function draw(){
+ const[t,b,gl]=G.bio,cam=G.cam;
+ let g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,t);g.addColorStop(1,b);ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ ctx.fillStyle='#fff';for(let i=0;i<40;i++){ctx.globalAlpha=.3+.4*Math.abs(Math.sin(T*.8+i));ctx.fillRect((i*149)%W,(i*83)%260,2,2)}ctx.globalAlpha=1;
+ glow(780,90,80,gl,.5);ctx.fillStyle='#fffbe8';ctx.beginPath();ctx.arc(780,90,26,0,6.3);ctx.fill();
+ for(let k=0;k<3;k++){const sp=150-k*20,sc=cam*(.12+k*.15),base=Math.floor(sc/sp);ctx.fillStyle=`rgba(8,20,24,${.3+k*.22})`;
+  for(let i=0;i<W/sp+2;i++){const id=base+i,x=id*sp-sc,h=120+k*50+((Math.sin(id*12.9+k)*.5+.5)*90);
+   ctx.fillRect(x+sp/2-7,H-h,14,h);for(let j=0;j<3;j++){ctx.beginPath();ctx.moveTo(x+sp/2-50+j*8,H-h+j*45+60);ctx.lineTo(x+sp/2,H-h+j*45-20);ctx.lineTo(x+sp/2+50-j*8,H-h+j*45+60);ctx.fill()}}}
+ ctx.save();ctx.translate(-Math.round(cam),0);
+ const vis=o=>o.x+(o.w||0)>cam-60&&o.x<cam+W+60;
+ for(const d of L.deco)if(vis(d)){glow(d.x,d.y-6,22,gl,.35+.2*Math.sin(T*2+d.x));ctx.fillStyle='#f4eefe';ctx.fillRect(d.x-2,d.y-9,4,9);ctx.fillStyle=d.k?'#ff9fd6':'#7cf5e0';ctx.beginPath();ctx.arc(d.x,d.y-9,6+d.k*2,Math.PI,0);ctx.fill()}
+ for(const s of L.plats)if(vis(s))plat(s,s.one);
+ for(const m of L.movers)plat(m,true,true);
+ for(const c of L.coins)if(!c.got&&vis(c)){const sx=Math.abs(Math.cos(T*2.5+c.t))*8+2,y=c.y+Math.sin(T*3+c.t)*3;glow(c.x,y,18,'#8ff6ff',.4);
+  ctx.beginPath();ctx.moveTo(c.x,y-11);ctx.lineTo(c.x+sx,y);ctx.lineTo(c.x,y+11);ctx.lineTo(c.x-sx,y);ctx.closePath();ctx.fillStyle='#9ff8ff';ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke()}
+ const cx=P.x+11,cy=P.y+15;
+ for(const q of L.secrets)if(!q.got){const d=Math.hypot(q.x-cx,q.y-cy),a=Math.max(.1,Math.min(1,1.2-d/260));ctx.globalAlpha=a*(.7+.3*Math.sin(T*5));glow(q.x,q.y,28,'#ffe27a',.6);star(q.x,q.y,11,'#fff2a8');ctx.globalAlpha=1}
+ const COL=['#ff9fd6','#c9a8ff','#ffc58a','#9fe8ff','#b6f59a'];
+ for(const m of L.mons){if(!vis(m))continue;const cxm=m.x+15,sq=m.alive?1:Math.max(0,m.sq/.4);ctx.globalAlpha=m.alive?1:sq;
+  const bob=m.alive?Math.sin(m.t*8)*1.5:0;ctx.fillStyle=COL[m.c];ctx.beginPath();ctx.ellipse(cxm,m.y+26-13*sq,16+(1-sq)*8,(13+bob)*sq+1,0,0,6.3);ctx.fill();
+  if(m.alive){ctx.fillStyle='#fff';for(const e of[-6,6]){ctx.beginPath();ctx.arc(cxm+e,m.y+10,5,0,6.3);ctx.fill()}ctx.fillStyle='#2a1636';for(const e of[-6,6]){ctx.beginPath();ctx.arc(cxm+e+m.dir*1.5,m.y+11,2.4,0,6.3);ctx.fill()}
+   ctx.fillStyle='rgba(255,90,140,.45)';ctx.beginPath();ctx.arc(cxm-11,m.y+17,3,0,6.3);ctx.arc(cxm+11,m.y+17,3,0,6.3);ctx.fill()}ctx.globalAlpha=1}
+ const pt=L.portal;glow(pt.x,pt.y,110,'#b6fff0',.55+.15*Math.sin(T*3));
+ for(let i=0;i<3;i++){ctx.strokeStyle=i?'#ff9fd6':'#eafffa';ctx.lineWidth=3;ctx.beginPath();ctx.ellipse(pt.x,pt.y,24-i*5,44-i*8,0,0,6.3);ctx.stroke()}
+ g=ctx.createRadialGradient(pt.x,pt.y,2,pt.x,pt.y,40);g.addColorStop(0,'#fff');g.addColorStop(1,'rgba(124,245,224,.2)');ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(pt.x,pt.y,19,38,0,0,6.3);ctx.fill();
+ for(let i=0;i<6;i++){const a=T*1.5+i*1.05;star(pt.x+Math.cos(a)*34,pt.y+Math.sin(a)*52,4,'#fff')}
+ if(!(P.inv>0&&Math.floor(T*20)%2)){ctx.save();ctx.translate(P.x+11,P.y+15);ctx.scale(P.f,1);const st=P.on?1:1-Math.min(.12,Math.abs(P.vy)/6000*10);ctx.scale(1/st,st);
+  ctx.fillStyle='#ff9fd6';ctx.beginPath();ctx.ellipse(-3,7,11,9,0,0,6.3);ctx.fill();
+  ctx.fillStyle='#ffeaf5';ctx.beginPath();ctx.ellipse(0,-2,11,11,0,0,6.3);ctx.fill();
+  ctx.fillStyle='#ffeaf5';for(const e of[-7,4]){ctx.beginPath();ctx.moveTo(e,-8);ctx.lineTo(e+4,-20);ctx.lineTo(e+8,-8);ctx.fill()}
+  ctx.fillStyle='#ff9fd6';ctx.beginPath();ctx.moveTo(-3,-9);ctx.lineTo(-1,-16);ctx.lineTo(1,-9);ctx.fill();
+  ctx.fillStyle='#2a1636';ctx.beginPath();ctx.arc(3,-3,2,0,6.3);ctx.arc(-4,-3,2,0,6.3);ctx.fill();ctx.restore()}
+ for(const p of parts){ctx.globalAlpha=Math.max(0,p.l*1.6);ctx.fillStyle=p.c;ctx.fillRect(p.x-2,p.y-2,4,4)}ctx.globalAlpha=1;
+ ctx.restore();
+ for(let i=0;i<26;i++){const x=((i*173-cam*(.5+i%3*.2))%W+W)%W,y=90+(i*41)%330+Math.sin(T*.8+i)*18;glow(x,y,10,'#fff6a8',.5+.4*Math.sin(T*2+i))}
+ ctx.font='700 20px ui-rounded,"Trebuchet MS",sans-serif';ctx.textBaseline='top';ctx.shadowColor='#000';ctx.shadowBlur=6;
+ for(let i=0;i<3;i++){ctx.fillStyle=i<G.hearts?'#ff7fb8':'rgba(255,255,255,.2)';ctx.fillText('♥',16+i*26,12)}
+ ctx.fillStyle='#eafcf6';ctx.fillText(`Level ${G.n}/30`,W/2-50,12);ctx.fillStyle='#8ff6ff';ctx.fillText(`◆ ${G.coins}/${G.total}`,W-170,12);ctx.fillStyle='#ffe27a';ctx.fillText(`✦ ${G.sec}`,W-70,12);
+ if(G.state==='play'&&G.time<3){ctx.globalAlpha=Math.min(1,3-G.time);ctx.textAlign='center';ctx.font='700 34px ui-rounded,"Trebuchet MS",sans-serif';ctx.fillStyle='#eafcf6';ctx.fillText(`Level ${G.n}`,W/2,200);
+  if(G.n===1){ctx.font='600 17px ui-rounded,sans-serif';ctx.fillText('Reach the glowing portal · stomp critters · listen for sparkles',W/2,246)}ctx.textAlign='left';ctx.globalAlpha=1}
+ ctx.shadowBlur=0}
+
+/* ---------- input & loop ---------- */
+const K={ArrowLeft:'l',KeyA:'l',ArrowRight:'r',KeyD:'r'},J=['ArrowUp','KeyW','Space'];
+addEventListener('keydown',e=>{if(K[e.code]){keys[K[e.code]]=1;e.preventDefault()}
+ if(J.includes(e.code)){if(!keys.j)keys.jp=1;keys.j=1;e.preventDefault()}
+ if(e.code==='KeyR'&&G.state!=='menu')start(G.n);if(e.code==='Escape')menu()});
+addEventListener('keyup',e=>{if(K[e.code])keys[K[e.code]]=0;if(J.includes(e.code))keys.j=0});
+const hold=(id,f)=>{const b=$(id);b.addEventListener('pointerdown',e=>{e.preventDefault();f(1)});['pointerup','pointerleave','pointercancel'].forEach(v=>b.addEventListener(v,()=>f(0)))};
+hold('tl',v=>keys.l=v);hold('tr',v=>keys.r=v);hold('tj',v=>{if(v&&!keys.j)keys.jp=1;keys.j=v});
+$('ov').addEventListener('click',e=>{const b=e.target.closest('button[data-act]');if(!b||b.disabled)return;
+ if(AC&&AC.state==='suspended')AC.resume().catch(()=>{});
+ if(b.dataset.act==='start')start(+b.dataset.n);else menu()});
+const clearKeys=()=>{keys.l=keys.r=keys.j=keys.jp=0};
+addEventListener('blur',clearKeys);document.addEventListener('visibilitychange',()=>{if(document.hidden)clearKeys()});
+addEventListener('contextmenu',e=>e.preventDefault());
+addEventListener('pointerdown',()=>{if(AC&&AC.state==='suspended')AC.resume().catch(()=>{})},{passive:true});
+let last=0,acc=0;
+function loop(ts){const d=Math.min(.05,(ts-last)/1000||0);last=ts;acc+=d;T+=d;while(acc>=1/60){step(1/60);acc-=1/60}draw();requestAnimationFrame(loop)}
+start(1,true);menu();requestAnimationFrame(loop);
+</script></body></html>
